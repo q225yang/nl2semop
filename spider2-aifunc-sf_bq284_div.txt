@@ -1,0 +1,91 @@
+Natural Language: "For BBC News articles where the body contains the word 'education' (case-insensitive),
+                  analyze the overall sentiment of each article using the first 2000 characters of the body.
+                  Provide a breakdown showing, for each news category, 
+                  the count of articles with 'positive' sentiment, 'negative' sentiment, 'neutral' sentiment, and 'mixed' sentiment.
+                  Order the results by category alphabetically, then by sentiment alphabetically."
+
+Gold SQL Query:
+WITH education_articles AS (
+    SELECT
+        "category",
+        AI_SENTIMENT(LEFT("body", 2000))
+            :categories[0].sentiment::STRING AS sentiment
+    FROM BBC.BBC_NEWS.FULLTEXT
+    WHERE LOWER("body") LIKE '%education%'
+)
+SELECT
+    "category",
+    sentiment,
+    COUNT(*) AS article_count
+FROM education_articles
+WHERE sentiment IN ('positive', 'negative', 'neutral', 'mixed')
+GROUP BY "category", sentiment
+ORDER BY "category" ASC, sentiment ASC;
+
+Logical Plan:
+Source table: BBC News Articles
+→ REL_FILTER(LOWER(body) LIKE '%education%')
+→ REL_COMPUTE(input_text = LEFT(body, 2000))
+→ SEM_SENTIMENT(input_text → overall sentiment)
+→ REL_FILTER(sentiment ∈ {positive, negative, neutral, mixed})
+→ REL_GROUP_BY(category, sentiment)
+→ REL_AGG(article_count = COUNT(*))
+→ REL_SORT(category ascending, sentiment ascending)
+→ REL_PROJECT(category, sentiment, article_count)
+
+
+Semi-Structure Example:
+{
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "filter",
+      "type": "relational",
+      "inputs": ["articles"],
+      "predicate": {
+        "operator": "contains",
+        "column": "body",
+        "value": "education",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "n2",
+      "name": "classify",
+      "type": "semantic",
+      "inputs": ["n1"],
+      "input_columns": ["body"],
+      "instruction": "Determine the overall sentiment of each article.",
+      "output_column": "sentiment",
+      "labels": ["positive", "negative", "neutral", "mixed"]
+    },
+    {
+      "id": "n3",
+      "name": "group_by",
+      "type": "relational",
+      "inputs": ["n2"],
+      "keys": ["category", "sentiment"]
+    },
+    {
+      "id": "n4",
+      "name": "aggregate",
+      "type": "relational",
+      "inputs": ["n3"],
+      "aggregations": [
+        {
+          "function": "count",
+          "column": "*",
+          "output_column": "article_count"
+        }
+      ]
+    },
+    {
+      "id": "n5",
+      "name": "project",
+      "type": "relational",
+      "inputs": ["n4"],
+      "columns": ["category", "sentiment", "article_count"]
+    }
+  ],
+  "output": "n5"
+}

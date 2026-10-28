@@ -1,0 +1,186 @@
+Natural Language:
+"For refined human genetic variations collected in phase 3 on 2015-02-20
+ with reference bases 'AT' and 'TA',
+ filter to only those variants where the condition
+ 'This ancestral allele annotation indicates a structural genetic change
+ involving insertion or deletion of base pairs: '
+ concatenated with the ancestral allele description evaluates to true.
+
+ For each reference base, report the minimum and maximum start positions,
+ the proportion of variants (as a decimal between 0 and 1, rounded to
+ 4 decimal places) occurring at the minimum position,
+ the proportion occurring at the maximum position,
+ and a summary of the mutation characteristics aggregated using the
+ instruction 'For each of these six mutation types, indicate if it
+ appears in any annotation: deletion, insertion, complex_deletion,
+ complex_insertion, cryptic_indel, unsure.
+
+ Output exactly in this format:
+ deletion:[Y/N]; insertion:[Y/N]; complex_deletion:[Y/N];
+ complex_insertion:[Y/N]; cryptic_indel:[Y/N]; unsure:[Y/N]'."
+
+
+Logical Plan:
+
+                     Human Genetic Variants
+                               │
+                               ▼
+                          REL_FILTER
+                               │
+                               ▼
+               SEM_FILTER(structural insertion/deletion)
+                               │
+                               ▼
+           REL_COMPUTE(group minimum/maximum start positions)
+                               │
+                               ▼
+                  REL_GROUP_BY(reference_base)
+                               │
+               ┌───────────────┴───────────────┐
+               ▼                               ▼
+           REL_AGG                          SEM_AGG
+     min/max positions                  mutation summary
+     endpoint proportions
+               │                               │
+               └───────────────┬───────────────┘
+                               ▼
+                  REL_JOIN(on reference_base)
+                               │
+                               ▼
+                         REL_PROJECT
+                               │
+                               ▼
+                            RESULT
+
+
+Semi-Structured Example:
+{
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "filter",
+      "type": "relational",
+      "inputs": ["variants"],
+      "predicate": {
+        "operator": "and",
+        "conditions": [
+          {
+            "column": "refined",
+            "operator": "=",
+            "value": true
+          },
+          {
+            "column": "phase",
+            "operator": "=",
+            "value": 3
+          },
+          {
+            "column": "collection_date",
+            "operator": "=",
+            "value": "2015-02-20"
+          },
+          {
+            "column": "reference_base",
+            "operator": "in",
+            "values": ["AT", "TA"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "n2",
+      "name": "filter",
+      "type": "semantic",
+      "inputs": ["n1"],
+      "input_columns": ["ancestral_allele_description"],
+      "instruction": "This ancestral allele annotation indicates a structural genetic change involving insertion or deletion of base pairs: {ancestral_allele_description}"
+    },
+    {
+      "id": "n3",
+      "name": "compute",
+      "type": "relational",
+      "inputs": ["n2"],
+      "computations": [
+        {
+          "expression": "MIN(start_position) OVER (PARTITION BY reference_base)",
+          "output_column": "group_min_start"
+        },
+        {
+          "expression": "MAX(start_position) OVER (PARTITION BY reference_base)",
+          "output_column": "group_max_start"
+        }
+      ]
+    },
+    {
+      "id": "n4",
+      "name": "group_by",
+      "type": "relational",
+      "inputs": ["n3"],
+      "keys": ["reference_base"]
+    },
+    {
+      "id": "n5",
+      "name": "aggregate",
+      "type": "relational",
+      "inputs": ["n4"],
+      "aggregations": [
+        {
+          "function": "min",
+          "column": "start_position",
+          "output_column": "min_start"
+        },
+        {
+          "function": "max",
+          "column": "start_position",
+          "output_column": "max_start"
+        },
+        {
+          "expression": "ROUND(1.0 * SUM(CASE WHEN start_position = group_min_start THEN 1 ELSE 0 END) / COUNT(*), 4)",
+          "output_column": "proportion_at_min"
+        },
+        {
+          "expression": "ROUND(1.0 * SUM(CASE WHEN start_position = group_max_start THEN 1 ELSE 0 END) / COUNT(*), 4)",
+          "output_column": "proportion_at_max"
+        }
+      ]
+    },
+    {
+      "id": "n6",
+      "name": "aggregate",
+      "type": "semantic",
+      "inputs": ["n4"],
+      "scope": "group",
+      "input_columns": ["ancestral_allele_description"],
+      "instruction": "For each of these six mutation types, indicate if it appears in any annotation: deletion, insertion, complex_deletion, complex_insertion, cryptic_indel, unsure. Output exactly in this format: deletion:[Y/N]; insertion:[Y/N]; complex_deletion:[Y/N]; complex_insertion:[Y/N]; cryptic_indel:[Y/N]; unsure:[Y/N]",
+      "output_column": "mutation_summary",
+      "output_type": "string"
+    },
+    {
+      "id": "n7",
+      "name": "join",
+      "type": "relational",
+      "inputs": ["n5", "n6"],
+      "join_type": "inner",
+      "on": {
+        "left_column": "reference_base",
+        "operator": "=",
+        "right_column": "reference_base"
+      }
+    },
+    {
+      "id": "n8",
+      "name": "project",
+      "type": "relational",
+      "inputs": ["n7"],
+      "columns": [
+        "reference_base",
+        "min_start",
+        "max_start",
+        "proportion_at_min",
+        "proportion_at_max",
+        "mutation_summary"
+      ]
+    }
+  ],
+  "output": "n8"
+}
